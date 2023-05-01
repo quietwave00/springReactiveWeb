@@ -4,8 +4,10 @@ import com.practice.webflux.domain.Customer;
 import com.practice.webflux.domain.CustomerRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;
+import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -15,11 +17,15 @@ import java.time.Duration;
 import java.util.concurrent.AbstractExecutorService;
 
 @RestController
-@RequiredArgsConstructor
 public class CustomerController {
 
     private final CustomerRepository customerRepository;
+    private final Sinks.Many<Customer> sink; //stream을 합쳐줌
 
+    public CustomerController(CustomerRepository customerRepository) {
+        this.customerRepository = customerRepository;
+        sink = Sinks.many().multicast().onBackpressureBuffer();
+    }
 
     //한번에 flush
     @GetMapping("/flux")
@@ -41,6 +47,21 @@ public class CustomerController {
     @GetMapping("/customer/{id}")
     public Mono<Customer> findById(@PathVariable("id") Long id) {
         return customerRepository.findById(id).log();
+    }
+
+    //SSE 프로토콜 적용
+    @GetMapping(value = "/customer/sse")
+    public Flux<ServerSentEvent<Customer>> findAllSSE() {
+        return sink.asFlux().map(c -> ServerSentEvent.builder(c).build()).doOnCancel(() -> {
+            sink.asFlux().blockLast();
+        });
+    }
+
+    @PostMapping("/customer")
+    public Mono<Customer> save() {
+        return customerRepository.save(new Customer("Gildong", "Hong")).doOnNext(c -> {
+            sink.tryEmitNext(c);
+        });
     }
 
 
